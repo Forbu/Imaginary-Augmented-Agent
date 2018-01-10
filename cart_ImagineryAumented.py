@@ -10,9 +10,12 @@ Created on Mon Dec 18 14:39:17 2017
 MAIN program 
 for imaginary agent
 """
+
+# importing the network structure
 from cart_ImagineryNetwork import *
 import numpy as np
 import math
+
 # test part of the neural network
 from torch.distributions import Categorical
     
@@ -23,9 +26,9 @@ def init_weights(m):
     if type(m) == nn.LSTM:
         m.weight_hh_l0.data.normal_(0.0, math.sqrt(2. / 100000))
 
-# Now the training scession
+# Main training program
 class cart_pole_solver:
-    def __init__(self,size_rollout = 5,n_episodes=1000, n_win_ticks=195, max_env_steps=None, gamma=0.99, alpha=0.01, batch_size=1, monitor=False, quiet=False):
+    def __init__(self,size_rollout = 5,n_episodes=1000, n_win_ticks=195, max_env_steps=None, gamma=0.99, alpha=0.01, batch_size=16, monitor=False, quiet=False):
         self.size_rollout = size_rollout
         
         self.memory = deque(maxlen=100000)
@@ -41,19 +44,23 @@ class cart_pole_solver:
         self.n_win_ticks = n_win_ticks
         self.batch_size = batch_size
         self.quiet = quiet
+        
+        # parameter of the augmented agent
         self.size_rollout = size_rollout
         if max_env_steps is not None: self.env._max_episode_steps = max_env_steps
         
-        # NEURAL NETWORK MODEL
-        self.env_model_ = env_network()
-        self.policy_model = policy_network_pre_trained()
-        self.imagine_model = Imagine_Core_network(self.policy_model,self.env_model_)
-        self.Imagine_future_network = imagine_future_network(self.imagine_model,self.size_rollout)
+        # The different network
+        self.env_model_ = env_network() # the environment network model 
+        self.policy_model = policy_network_pre_trained() # the pretrained policy network model
+        self.imagine_model = Imagine_Core_network(self.policy_model,self.env_model_) # Imaginary Core model
+        self.Imagine_future_network = imagine_future_network(self.imagine_model,self.size_rollout) # Concat of Imaginary Core model
         
-        self.Final_synthesis_network = final_synthesis_network()
-        self.Rollout_encoder = rollout_encoder(self.size_rollout)
-        self.Model_free_network = model_free_network()
         
+        self.Rollout_encoder = rollout_encoder(self.size_rollout) # the rollout encoder
+        self.Model_free_network = model_free_network() # the model dree network
+        self.Final_synthesis_network = final_synthesis_network() # the TOP network (taking the rollout and the model-free network as input)
+
+        # total network
         self.all_network = aggregator_network(self.Rollout_encoder, self.Model_free_network, self.Imagine_future_network, self.Final_synthesis_network,size_rollout)
         
         # Pre trained model
@@ -75,12 +82,12 @@ class cart_pole_solver:
         self.saved_log_probs = []
             
     def choose_action(self,state):
+        
+        # Action choosen from the whole network
+        action = self.all_network(state) # we get probability of the action 
+        function_sampling = Categorical(action) 
+        action_done = function_sampling.sample() # we sample
 
-        action = self.all_network(state)
-        function_sampling = Categorical(action)
-        action_done = function_sampling.sample()
-        #print(action)
-        #print(action_done)
         return action_done.data,function_sampling.log_prob(action_done)
     
     def remember(self,log_action,rewards,batch_index,done):
@@ -117,7 +124,7 @@ class cart_pole_solver:
                 state = next_state
                 
                 i += 1
-            #exit(-1)
+            
             index_batch = (index_batch + 1) % self.batch_size
             scores.append(i)
             mean_score = np.mean(scores)
@@ -125,7 +132,7 @@ class cart_pole_solver:
                 if not self.quiet: print('Ran {} episodes. Solved after {} trials ✔'.format(e, e - 100))
                 return e - 100
             if (e % self.batch_size == 0 and not self.quiet) and e != 0:
-                print('[Episode {}] - Mean survival time over last 100 episodes was {} ticks.'.format(e, mean_score))
+                print('[Episode {}] - Mean survival time over last 16 episodes was {} ticks.'.format(e, mean_score))
                 self.gradiant_desc()
                 
         
@@ -148,16 +155,16 @@ class cart_pole_solver:
         for i in range(self.batch_size):
             
             log_prob = list(map(lambda x:x[0],self.memory[i]))
-            #print(log_prob)
+            
             rewards = np.array(list(map(lambda x:x[1],self.memory[i])))
             rewards = self.get_reward_learning(rewards)
-            #print(rewards)
+            
             for t in range(len(self.memory[i])):
 
                 rewards_value = (rewards[t] - rewards.mean())/rewards.std()
                 
                 delta_J += - log_prob[t] * rewards_value
-        #exit(-1)
+        
         delta_J.backward()
         self.optimizerRollout.step()
         self.optimizerFree.step()
@@ -165,8 +172,7 @@ class cart_pole_solver:
 
         
         self.memory = [[] for p in range(self.batch_size)]
-       
-        #print("yoloooo")
+
 
 if __name__ == '__main__':
     agent = cart_pole_solver()
